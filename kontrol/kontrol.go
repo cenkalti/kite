@@ -14,7 +14,6 @@ import (
 
 	etcdErr "github.com/coreos/etcd/error"
 	"github.com/coreos/etcd/store"
-	"github.com/dgrijalva/jwt-go"
 	"github.com/koding/kite"
 	"github.com/koding/kite/config"
 	"github.com/koding/kite/dnode"
@@ -94,7 +93,6 @@ func New(conf *config.Config, publicKey, privateKey string) *Kontrol {
 
 	k.HandleFunc("register", kontrol.handleRegister)
 	k.HandleFunc("getKites", kontrol.handleGetKites)
-	k.HandleFunc("getToken", kontrol.handleGetToken)
 	k.HandleFunc("cancelWatcher", kontrol.handleCancelWatcher)
 
 	return kontrol
@@ -437,7 +435,7 @@ func (k *Kontrol) getKites(r *kite.Request, query protocol.KontrolQuery, watchCa
 	)
 	if err != nil {
 		if err2, ok := err.(*etcdErr.Error); ok && err2.ErrorCode == etcdErr.EcodeKeyNotFound {
-			result.Kites = make([]*protocol.KiteWithToken, 0) // do not send null
+			result.Kites = make([]*protocol.KiteWithURL, 0) // do not send null
 			return result, nil
 		}
 
@@ -445,21 +443,42 @@ func (k *Kontrol) getKites(r *kite.Request, query protocol.KontrolQuery, watchCa
 		return nil, fmt.Errorf("internal error - getKites")
 	}
 
-	// Attach tokens to kites
-	kitesAndTokens, err := addTokenToKites(flatten(event.Node.Nodes), r.Username, k.Server.Kite.Kite().Username, key, k.privateKey)
+	kitesWithURL, err := addURLToKites(flatten(event.Node.Nodes))
 	if err != nil {
 		return nil, err
 	}
 
 	// Shuffle the list
-	shuffled := make([]*protocol.KiteWithToken, len(kitesAndTokens))
-	perm := rand.Perm(len(kitesAndTokens))
+	shuffled := make([]*protocol.KiteWithURL, len(kitesWithURL))
+	perm := rand.Perm(len(kitesWithURL))
 	for i, v := range perm {
-		shuffled[v] = kitesAndTokens[i]
+		shuffled[v] = kitesWithURL[i]
 	}
 
 	result.Kites = shuffled
 	return result, nil
+}
+
+func addURLToKites(nodes store.NodeExterns) ([]*protocol.KiteWithURL, error) {
+	kitesWithToken := make([]*protocol.KiteWithURL, len(nodes))
+
+	for i, node := range nodes {
+		kite, err := kiteFromEtcdKV(node.Key)
+		if err != nil {
+			return nil, err
+		}
+
+		kitesWithToken[i] = &protocol.KiteWithURL{
+			Kite: *kite,
+		}
+
+		rv := new(registerValue)
+		json.Unmarshal([]byte(node.Value), rv)
+
+		kitesWithToken[i].URL = rv.URL.String()
+	}
+
+	return kitesWithToken, nil
 }
 
 func (k *Kontrol) handleCancelWatcher(r *kite.Request) (interface{}, error) {
@@ -555,12 +574,6 @@ func (k *Kontrol) watchAndSendKiteEvents(watcher *store.Watcher, watcherID strin
 				e.Kite = *otherKite
 				e.URL = val.URL.String()
 
-				e.Token, err = generateToken(etcdEvent.Node.Key, query.Username, k.Server.Kite.Kite().Username, k.privateKey)
-				if err != nil {
-					log.Error("watch notify: %s", err)
-					return
-				}
-
 				response.Result = e
 			case store.Delete: // Delete happens when we detect that otherKite is disconnected.
 				fallthrough
@@ -598,74 +611,6 @@ func flatten(in store.NodeExterns) (out store.NodeExterns) {
 	return
 }
 
-func addTokenToKites(nodes store.NodeExterns, username, issuer, queryKey, privateKey string) ([]*protocol.KiteWithToken, error) {
-	kitesWithToken := make([]*protocol.KiteWithToken, len(nodes))
-
-	for i, node := range nodes {
-		kite, err := kiteFromEtcdKV(node.Key)
-		if err != nil {
-			return nil, err
-		}
-
-		kitesWithToken[i], err = addTokenToKite(kite, username, issuer, queryKey, privateKey)
-		if err != nil {
-			return nil, err
-		}
-
-		rv := new(registerValue)
-		json.Unmarshal([]byte(node.Value), rv)
-
-		kitesWithToken[i].URL = rv.URL.String()
-	}
-
-	return kitesWithToken, nil
-}
-
-func addTokenToKite(kite *protocol.Kite, username, issuer, queryKey, privateKey string) (*protocol.KiteWithToken, error) {
-	tkn, err := generateToken(queryKey, username, issuer, privateKey)
-	if err != nil {
-		return nil, err
-	}
-
-	return &protocol.KiteWithToken{
-		Kite:  *kite,
-		Token: tkn,
-	}, nil
-}
-
-// generateToken returns a JWT token string. Please see the URL for details:
-// http://tools.ietf.org/html/draft-ietf-oauth-json-web-token-13#section-4.1
-func generateToken(queryKey string, username, issuer, privateKey string) (string, error) {
-	tknID, err := uuid.NewV4()
-	if err != nil {
-		return "", errors.New("Server error: Cannot generate a token")
-	}
-
-	// Identifies the expiration time after which the JWT MUST NOT be accepted
-	// for processing.
-	ttl := TokenTTL
-
-	// Implementers MAY provide for some small leeway, usually no more than
-	// a few minutes, to account for clock skew.
-	leeway := TokenLeeway
-
-	tkn := jwt.New(jwt.GetSigningMethod("RS256"))
-	tkn.Claims["iss"] = issuer                                       // Issuer
-	tkn.Claims["sub"] = username                                     // Subject
-	tkn.Claims["aud"] = queryKey                                     // Audience
-	tkn.Claims["exp"] = time.Now().UTC().Add(ttl).Add(leeway).Unix() // Expiration Time
-	tkn.Claims["nbf"] = time.Now().UTC().Add(-leeway).Unix()         // Not Before
-	tkn.Claims["iat"] = time.Now().UTC().Unix()                      // Issued At
-	tkn.Claims["jti"] = tknID.String()                               // JWT ID
-
-	signed, err := tkn.SignedString([]byte(privateKey))
-	if err != nil {
-		return "", errors.New("Server error: Cannot generate a token")
-	}
-
-	return signed, nil
-}
-
 // kiteFromEtcdKV returns a *protocol.Kite from an etcd key.
 // etcd key is like: /kites/devrim/development/mathworker/1/localhost/tardis.local/662ed473-351f-4c9f-786b-99cf02cdaadb
 func kiteFromEtcdKV(key string) (*protocol.Kite, error) {
@@ -684,37 +629,4 @@ func kiteFromEtcdKV(key string) (*protocol.Kite, error) {
 		Hostname:    fields[6],
 		ID:          fields[7],
 	}, nil
-}
-
-func (k *Kontrol) handleGetToken(r *kite.Request) (interface{}, error) {
-	var query protocol.KontrolQuery
-	err := r.Args.One().Unmarshal(&query)
-	if err != nil {
-		return nil, errors.New("Invalid query")
-	}
-
-	kiteKey, err := getQueryKey(&query)
-	if err != nil {
-		return nil, err
-	}
-
-	event, err := k.store.Get(
-		KitesPrefix+kiteKey, // path
-		false, // recursive
-		false, // sorted
-	)
-	if err != nil {
-		if err2, ok := err.(*etcdErr.Error); ok && err2.ErrorCode == etcdErr.EcodeKeyNotFound {
-			return nil, errors.New("Kite not found")
-		}
-		return nil, err
-	}
-
-	var kiteVal registerValue
-	err = json.Unmarshal([]byte(event.Node.Value), &kiteVal)
-	if err != nil {
-		return nil, err
-	}
-
-	return generateToken(kiteKey, r.Username, k.Server.Kite.Kite().Username, k.privateKey)
 }

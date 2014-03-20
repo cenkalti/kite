@@ -66,14 +66,13 @@ type RegisterResult struct {
 }
 
 type GetKitesResult struct {
-	Kites     []*KiteWithToken `json:"kites"`
-	WatcherID string           `json:"watcherID"`
+	Kites     []*KiteWithURL `json:"kites"`
+	WatcherID string         `json:"watcherID"`
 }
 
-type KiteWithToken struct {
-	Kite  Kite   `json:"kite"`
-	URL   string `json:"url"`
-	Token string `json:"token"`
+type KiteWithURL struct {
+	Kite Kite   `json:"kite"`
+	URL  string `json:"url"`
 }
 
 // KiteEvent is the struct that is sent as an argument in watchCallback of
@@ -83,8 +82,7 @@ type KiteEvent struct {
 	Kite   Kite       `json:"kite"`
 
 	// Required to connect when Action == Register
-	URL   string `json:"url,omitempty"`
-	Token string `json:"token,omitempty"`
+	URL string `json:"url,omitempty"`
 }
 
 type KiteAction string
