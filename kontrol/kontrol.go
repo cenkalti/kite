@@ -47,8 +47,6 @@ type Kontrol struct {
 	store        store.Store  // etcd data store
 	psListener   net.Listener // etcd peer server listener (default port: 7001)
 	sListener    net.Listener // etcd http server listener (default port: 4001)
-	publicKey    string       // RSA key for validation of tokens
-	privateKey   string       // RSA key for signing tokens
 
 	// To cancel running watchers, we must store the references
 	watchers      map[string]*store.Watcher
@@ -64,7 +62,7 @@ type Kontrol struct {
 //     openssl genrsa -out testkey.pem 2048
 //     openssl rsa -in testkey.pem -pubout > testkey_pub.pem
 //
-func New(conf *config.Config, publicKey, privateKey string) *Kontrol {
+func New(conf *config.Config) *Kontrol {
 	k := kite.New("kontrol", Version)
 	k.Config = conf
 
@@ -84,8 +82,6 @@ func New(conf *config.Config, publicKey, privateKey string) *Kontrol {
 		PeerAddr:     "http://localhost:7001",
 		PeerBindAddr: ":7001",
 		Peers:        nil,
-		publicKey:    publicKey,
-		privateKey:   privateKey,
 		watchers:     make(map[string]*store.Watcher),
 	}
 
