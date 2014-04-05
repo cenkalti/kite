@@ -13,8 +13,6 @@ func (s *Scrubber) Scrub(obj interface{}) (callbacks map[string]Path) {
 	return callbacks
 }
 
-var callerType = reflect.TypeOf((*caller)(nil)).Elem()
-
 // collectCallbacks walks over the rawObj and populates callbackMap
 // with callbacks. This is a recursive function. The top level send must
 // sends arguments as rawObj, an empty path and empty callbackMap parameter.
@@ -57,7 +55,7 @@ func (s *Scrubber) collectCallbacks(rawObj interface{}, path Path, callbackMap m
 			}
 
 			v2 := reflect.ValueOf(e.Interface())
-			if v2.Type().Implements(callerType) {
+			if isFunction(v2) {
 				s.registerCallback(v2, path, callbackMap)
 				return
 			}
@@ -65,7 +63,7 @@ func (s *Scrubber) collectCallbacks(rawObj interface{}, path Path, callbackMap m
 			s.collectFields(v2, path, callbackMap)
 			s.collectMethods(v, path, callbackMap)
 		case reflect.Struct:
-			if v.Type().Implements(callerType) {
+			if isFunction(v) {
 				s.registerCallback(v, path, callbackMap)
 				return
 			}
@@ -74,6 +72,22 @@ func (s *Scrubber) collectCallbacks(rawObj interface{}, path Path, callbackMap m
 			s.collectMethods(v, path, callbackMap)
 		}
 	}
+}
+
+var callerType = reflect.TypeOf((*caller)(nil)).Elem()
+
+func isFunction(v reflect.Value) bool {
+	if v.Kind() != reflect.Struct {
+		return false
+	}
+	callerField := v.FieldByName("Caller")
+	if !callerField.IsValid() {
+		return false
+	}
+	if callerField.Kind() != reflect.Interface {
+		return false
+	}
+	return callerField.Type().Implements(callerType)
 }
 
 // collectFields collects callbacks from the exported fields of a struct.
@@ -123,24 +137,25 @@ func (s *Scrubber) collectMethods(v reflect.Value, path Path, callbackMap map[st
 
 // registerCallback is called when a function/method is found in arguments array.
 func (s *Scrubber) registerCallback(val reflect.Value, path Path, callbackMap map[string]Path) {
+	// TODO Refactor registerCallback function.
+	// fmt.Printf("--- registerCallback: %#v\n", val.Interface())
+
 	if len(path) == 0 {
 		panic("root element must be a struct or slice")
 	}
 
 	var cb func(*Partial) // We are going to save this in scubber
 
-	// Save in client callbacks so we can call it when we receive a call.
-	switch f := val.Interface().(type) {
-	case Function:
-		if f.Caller == nil {
+	// val can be a type of Function or func(*Partial)
+	if isFunction(val) {
+		callerValue := val.FieldByName("Caller").Interface()
+		if callerValue == nil {
 			return
 		}
-		cb = f.Caller.(callback)
-	case func(*Partial):
-		cb = f
-	default:
-		// TODO enable panic in registerCallback ans see what happens.
-		// panic(fmt.Sprintf("invalid callback: %#v", i))
+		cb = callerValue.(callback)
+	} else if i, ok := val.Interface().(func(*Partial)); ok {
+		cb = i
+	} else {
 		return
 	}
 
@@ -150,7 +165,7 @@ func (s *Scrubber) registerCallback(val reflect.Value, path Path, callbackMap ma
 
 	seq := strconv.FormatUint(next, 10)
 
-	// Save in scubber callbacks
+	// Save in scubber callbacks so we can call it when we receive a call.
 	s.callbacks[next] = cb
 
 	// Add to callback map to be sent to remote.
@@ -158,4 +173,6 @@ func (s *Scrubber) registerCallback(val reflect.Value, path Path, callbackMap ma
 	pathCopy := make(Path, len(path))
 	copy(pathCopy, path)
 	callbackMap[seq] = pathCopy
+
+	// fmt.Println("--- REGISTERED")
 }

@@ -284,13 +284,13 @@ func (c *Client) processMessage(data []byte) error {
 		id := uint64(method)
 		callback := c.scrubber.GetCallback(id)
 		if callback == nil {
-			err = CallbackNotFoundError{id, msg.Arguments}
+			err = CallbackNotFoundError{id, Arguments{msg.Arguments}}
 			return err
 		}
 		c.runCallback(callback, msg.Arguments)
 	case string:
 		if handler, ok = c.LocalKite.handlers[method]; !ok {
-			err = MethodNotFoundError{method, msg.Arguments}
+			err = MethodNotFoundError{method, Arguments{msg.Arguments}}
 			return err
 		}
 		c.runMethod(method, handler, msg.Arguments)
@@ -381,7 +381,7 @@ type callOptions struct {
 	Kite             protocol.Kite   `json:"kite" dnode:"-"`
 	Authentication   *Authentication `json:"authentication"`
 	WithArgs         *dnode.Partial  `json:"withArgs" dnode:"-"`
-	ResponseCallback dnode.Function  `json:"responseCallback"`
+	ResponseCallback Function        `json:"responseCallback"`
 }
 
 // callOptionsOut is the same structure with callOptions.
@@ -393,7 +393,7 @@ type callOptionsOut struct {
 	WithArgs []interface{} `json:"withArgs"`
 }
 
-func (c *Client) wrapMethodArgs(args []interface{}, responseCallback dnode.Function) []interface{} {
+func (c *Client) wrapMethodArgs(args []interface{}, responseCallback Function) []interface{} {
 	options := callOptionsOut{
 		WithArgs: args,
 		callOptions: callOptions{
@@ -414,21 +414,21 @@ type Authentication struct {
 
 // response is the type of the return value of Tell() and Go() methods.
 type response struct {
-	Result *dnode.Partial
+	Result *Arguments
 	Err    error
 }
 
 // Tell makes a blocking method call to the server.
 // Waits until the callback function is called by the other side and
 // returns the result and the error.
-func (c *Client) Tell(method string, args ...interface{}) (result *dnode.Partial, err error) {
+func (c *Client) Tell(method string, args ...interface{}) (result *Arguments, err error) {
 	return c.TellWithTimeout(method, 0, args...)
 }
 
 // TellWithTimeout does the same thing with Tell() method except it takes an
 // extra argument that is the timeout for waiting reply from the remote Kite.
 // If timeout is given 0, the behavior is same as Tell().
-func (c *Client) TellWithTimeout(method string, timeout time.Duration, args ...interface{}) (result *dnode.Partial, err error) {
+func (c *Client) TellWithTimeout(method string, timeout time.Duration, args ...interface{}) (result *Arguments, err error) {
 	response := <-c.GoWithTimeout(method, timeout, args...)
 	return response.Result, response.Err
 }
@@ -580,8 +580,8 @@ func sendCallbackID(callbacks map[string]dnode.Path, ch chan<- uint64) {
 // makeResponseCallback prepares and returns a callback function sent to the server.
 // The caller of the Tell() is blocked until the server calls this callback function.
 // Sets theResponse and notifies the caller by sending to done channel.
-func (c *Client) makeResponseCallback(doneChan chan *response, removeCallback <-chan uint64, method string, args []interface{}) dnode.Function {
-	return Callback(func(arguments *dnode.Partial) {
+func (c *Client) makeResponseCallback(doneChan chan *response, removeCallback <-chan uint64, method string, args []interface{}) Function {
+	return Callback(func(arguments *Arguments) {
 		// Single argument of response callback.
 		var resp struct {
 			Result *dnode.Partial `json:"result"`
@@ -592,9 +592,9 @@ func (c *Client) makeResponseCallback(doneChan chan *response, removeCallback <-
 		defer func() {
 			if resp.Err != nil {
 				c.LocalKite.Log.Warning("Error received from kite: %q method: %q args: %#v err: %s", c.Kite.Name, method, args, resp.Err.Error())
-				doneChan <- &response{resp.Result, resp.Err}
+				doneChan <- &response{&Arguments{resp.Result}, resp.Err}
 			} else {
-				doneChan <- &response{resp.Result, nil}
+				doneChan <- &response{&Arguments{resp.Result}, nil}
 			}
 		}()
 

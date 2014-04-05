@@ -24,7 +24,7 @@ func (c *Client) runMethod(method string, handlerFunc HandlerFunc, args *dnode.P
 		kiteErr *Error
 
 		// Will send the response when called.
-		callback dnode.Function
+		callback Function
 	)
 
 	// Send result if "responseCallback" exists in the request.
@@ -123,16 +123,22 @@ func (k *Kite) HandleFunc(method string, handler HandlerFunc) {
 // Request contains information about the incoming request.
 type Request struct {
 	Method         string
-	Args           *dnode.Partial
+	Args           *Arguments
 	LocalKite      *Kite
 	Client         *Client
 	Username       string
 	Authentication *Authentication
 }
 
+type Arguments struct{ *dnode.Partial }
+
+type Function struct{ dnode.Function }
+
 // Wrap your function with Callback to send it as an argument to a Client.
-func Callback(f func(*dnode.Partial)) dnode.Function {
-	return dnode.Callback(f)
+func Callback(f func(*Arguments)) Function {
+	g := func(p *dnode.Partial) { f(&Arguments{p}) }
+	h := dnode.Callback(g)
+	return Function{h}
 }
 
 // runCallback is called when a callback method call is received from remote Kite.
@@ -145,7 +151,7 @@ func (c *Client) runCallback(callback func(*dnode.Partial), args *dnode.Partial)
 }
 
 // newRequest returns a new *Request from the method and arguments passed.
-func (c *Client) newRequest(method string, arguments *dnode.Partial) (request *Request, responseCallback dnode.Function) {
+func (c *Client) newRequest(method string, arguments *dnode.Partial) (request *Request, responseCallback Function) {
 	// Parse dnode method arguments: [options]
 	var options callOptions
 	arguments.One().MustUnmarshal(&options)
@@ -158,9 +164,14 @@ func (c *Client) newRequest(method string, arguments *dnode.Partial) (request *R
 		})
 	}
 
+	var args *Arguments
+	if options.WithArgs != nil {
+		args = &Arguments{options.WithArgs}
+	}
+
 	request = &Request{
 		Method:         method,
-		Args:           options.WithArgs,
+		Args:           args,
 		LocalKite:      c.LocalKite,
 		Client:         c,
 		Authentication: options.Authentication,

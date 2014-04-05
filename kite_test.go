@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/koding/kite/dnode"
 	_ "github.com/koding/kite/testutil"
 )
 
@@ -61,7 +60,7 @@ func TestKite(t *testing.T) {
 	}
 
 	resultChan := make(chan float64, 1)
-	resultCallback := func(args *dnode.Partial) {
+	resultCallback := func(args *Arguments) {
 		n := args.One().MustFloat64()
 		resultChan <- n
 	}

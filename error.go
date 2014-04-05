@@ -1,16 +1,12 @@
 package kite
 
-import (
-	"fmt"
-
-	"github.com/koding/kite/dnode"
-)
+import "fmt"
 
 // MethodNotFoundError is returned when there is no registered handler for
 // received method.
 type MethodNotFoundError struct {
 	Method string
-	Args   *dnode.Partial
+	Args   Arguments
 }
 
 func (e MethodNotFoundError) Error() string {
@@ -21,7 +17,7 @@ func (e MethodNotFoundError) Error() string {
 // received message.
 type CallbackNotFoundError struct {
 	ID   uint64
-	Args *dnode.Partial
+	Args Arguments
 }
 
 func (e CallbackNotFoundError) Error() string {
